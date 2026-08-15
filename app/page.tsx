@@ -4,6 +4,10 @@ import { listLeads } from "@/lib/db";
 import type { Lead } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+// Belt and braces alongside the driver-level `cache: "no-store"` in lib/db.ts:
+// the dashboard must never render a cached snapshot of the leads table.
+export const fetchCache = "force-no-store";
+export const revalidate = 0;
 
 export default async function Home() {
   let initialLeads: Lead[] = [];

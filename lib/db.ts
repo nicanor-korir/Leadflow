@@ -16,7 +16,12 @@ export function db(): NeonQueryFunction<false, false> {
         "DATABASE_URL is not set. Copy .env.example to .env.local and paste your Neon connection string."
       );
     }
-    client = neon(url);
+    // The Neon HTTP driver talks to Neon over `fetch`, and Next.js patches
+    // `fetch` to cache responses in the Data Cache — which persists across
+    // deployments. Without no-store, a query issued during the build gets
+    // replayed forever and Server Components render permanently stale rows.
+    // `dynamic = "force-dynamic"` does NOT cover this.
+    client = neon(url, { fetchOptions: { cache: "no-store" } });
   }
   return client;
 }
