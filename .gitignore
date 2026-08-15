@@ -21,3 +21,7 @@ yarn-error.log*
 
 # local agent guidance
 CLAUDE.md
+
+# added by `vercel env pull` — keep the checked-in template visible
+.env*
+!.env.example
