@@ -18,7 +18,7 @@ export default async function Home() {
   }
 
   const automationOn = Boolean(process.env.N8N_WEBHOOK_URL?.trim());
-  const llmOn = Boolean(process.env.OPENAI_API_KEY?.trim());
+  const llmOn = Boolean(process.env.GEMINI_API_KEY?.trim());
 
   return (
     <main className="mx-auto w-full max-w-[1240px] px-4 py-6 sm:px-6 sm:py-10">
@@ -45,7 +45,7 @@ export default async function Home() {
         <p>
           <span className="font-semibold text-ink">How this runs in production:</span> the intake form
           POSTs to a Next.js route handler, which validates with zod, scores the lead (deterministic
-          rubric by default, an LLM when <code className="rounded bg-[#f1f2f7] px-1 py-0.5">OPENAI_API_KEY</code>{" "}
+          rubric by default, Gemini when <code className="rounded bg-[#f1f2f7] px-1 py-0.5">GEMINI_API_KEY</code>{" "}
           is set) and inserts it into Neon Postgres. Neon has no database triggers, so that same route
           is the automation trigger — when{" "}
           <code className="rounded bg-[#f1f2f7] px-1 py-0.5">N8N_WEBHOOK_URL</code> is set it

@@ -72,18 +72,25 @@ Neon has no built-in database webhooks (unlike Supabase), so **the API route is 
 
 | # | Node | What it does |
 |---|------|--------------|
-| 1 | **Webhook** | Receives the lead JSON from `POST /api/leads`. |
-| 2 | **Normalize Fields** | Flattens the payload; derives company/domain from the email when blank. |
-| 3 | **AI Score** (HTTP → OpenAI) | Re-scores with the same rubric, forced to JSON output. |
-| 4 | **Parse AI Result** (Code) | Parses and clamps the score, re-attaches lead fields. |
+| 1 | **LeadFlow: New Lead** (Webhook) | Receives the flat lead JSON from `POST /api/leads`. |
+| 2 | **Normalize Fields** (Code) | Flattens the payload, derives company/domain from the email when blank, and builds the Gemini request. |
+| 3 | **AI Score (Gemini)** | Re-scores against the same rubric with a forced JSON schema. |
+| 4 | **Parse AI Result** (Code) | Reads whichever response envelope came back, clamps the score, and builds the CRM/Slack/write-back payloads. |
 | 5 | **Upsert to GoHighLevel** | Idempotent on email; tags `hot`/`warm`/`cold` + `ai-score-NN`. |
-| 6 | **Write Score back** (PATCH) | Calls `PATCH /api/leads/:id` to set `status='synced'`. |
+| 6 | **Write Score → LeadFlow** (PATCH) | Calls `PATCH /api/leads/:id` to set `status='synced'`. |
 | 7 | **Route by Temperature** (Switch) | Branches `hot` vs. everything else. |
 | 8 | **Alert Sales** (Slack) | Fires only for hot leads, with the AI's one-line reason. |
 
-Before activating, add credentials (OpenAI, GoHighLevel OAuth2) and replace the placeholders: the Slack Incoming Webhook URL and the GHL `locationId`.
+Four things to set before activating — all called out on the sticky note in the canvas:
 
-> **Note:** `n8n-workflow.json` was originally authored against Supabase. Against this Neon app, node 2 must read `$json.*` (the flat lead object this app sends) rather than `$json.body.record.*`, and node 6 must point at `https://<your-app>/api/leads/{{ $json.id }}` instead of the Supabase REST URL. See `automation-blueprint.md` for the Make.com and Zapier equivalents.
+1. `LEADFLOW_BASE_URL` at the top of **Normalize Fields**.
+2. A **Header Auth** credential named `x-goog-api-key` holding your Gemini key, attached to **AI Score**.
+3. The **GoHighLevel OAuth2** credential, and `YOUR_GHL_LOCATION_ID` inside **Parse AI Result**.
+4. Your **Slack Incoming Webhook** URL.
+
+Two details worth knowing: every HTTP body is built with `JSON.stringify`, so a quote or newline in a lead's message can't break the request; and if Gemini fails, **Parse AI Result** keeps the score the app already computed rather than overwriting a hot lead with a zero.
+
+> For the Make.com and Zapier equivalents, see `automation-blueprint.md`. For the full production hardening path, see **[docs/ai-workflows.md](docs/ai-workflows.md)**.
 
 ## 5. How the demo works
 
@@ -91,15 +98,26 @@ Submit the form and the pipeline strip animates through **Captured → Enriched 
 
 **Scoring** lives in `lib/score.ts` and is deterministic by default, so the same lead always produces the same number — no API key, no network call, nothing to break on stage. Starting at 30 it adds points for budget (up to +28), team size (up to +16), timeline urgency (up to +18) and a business email domain (+8), subtracts 6 for a free email domain, and adds +4 per pain keyword in the message (capped at +12) — naming the matched words in the reason. The result is clamped to 2–99: **hot ≥ 70**, **warm 45–69**, **cold < 45**.
 
-Set `OPENAI_API_KEY` and the same rubric is handed to `gpt-4o-mini` (`response_format: json_object`) instead. Any failure — bad key, rate limit, timeout, malformed JSON — silently falls back to the deterministic path. The header badges show which mode is live.
+Set `GEMINI_API_KEY` and the same rubric is handed to **Gemini** instead, via the Interactions API with a `response_format` schema that forces `{score, temperature, reason}`. Any failure — bad key, rate limit, timeout, malformed JSON, or an unrecognised response envelope — silently falls back to the deterministic path. The header badges show which mode is live.
+
+Grab a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 
 ### Environment variables
 
 | Variable | Required | Effect when unset |
 |---|---|---|
 | `DATABASE_URL` | **Yes** | The app shows a readable "could not reach the database" banner. |
-| `OPENAI_API_KEY` | No | Uses the built-in deterministic rubric. |
+| `GEMINI_API_KEY` | No | Uses the built-in deterministic rubric. |
+| `GEMINI_MODEL` | No | Defaults to `gemini-3.7-flash`. Use `gemini-3.5-flash-lite` for cheaper high-volume scoring. |
 | `N8N_WEBHOOK_URL` | No | No webhook fires; the app runs standalone. |
+
+### Tests
+
+```bash
+npm test
+```
+
+Covers the rubric's boundaries and every Gemini failure mode — bad key, HTTP error, network throw, malformed JSON, unknown response envelope — asserting each one falls back to the rubric rather than dropping the lead.
 
 ### API
 
@@ -117,7 +135,7 @@ Set `OPENAI_API_KEY` and the same rubric is handed to `gpt-4o-mini` (`response_f
 │  Intake form │ ──────────────────▶ │  Next.js API route │ ─────────▶ │  Neon        │
 │  (light UI)  │                     │  • zod validate    │            │  Postgres    │
 └──────────────┘                     │  • AI score (rubric│ ◀───────── │  (leads)     │
-        ▲                            │    or OpenAI)      │   SELECT   └──────────────┘
+        ▲                            │    or Gemini)      │   SELECT   └──────────────┘
         │  GET /api/leads            │  • fire webhook*   │
         │  (dashboard)               └─────────┬──────────┘
         │                                      │ *only if N8N_WEBHOOK_URL set

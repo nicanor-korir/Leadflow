@@ -1,5 +1,5 @@
 {
-  "name": "LeadFlow — Intake → AI Score → CRM Sync",
+  "name": "LeadFlow — Intake → Gemini Score → CRM Sync",
   "nodes": [
     {
       "parameters": {
@@ -9,63 +9,56 @@
         "options": {}
       },
       "id": "node-webhook",
-      "name": "Supabase: New Lead (Webhook)",
+      "name": "LeadFlow: New Lead",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [-40, 300],
       "webhookId": "leadflow-new-lead",
-      "notes": "Point a Supabase Database Webhook (INSERT on public.leads) at this URL."
+      "notes": "Copy this node's Production URL into N8N_WEBHOOK_URL on Vercel. POST /api/leads fire-and-forgets the flat lead JSON here after every insert."
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
-            { "id": "a1", "name": "lead_id", "value": "={{ $json.body.record.id }}", "type": "string" },
-            { "id": "a2", "name": "name", "value": "={{ $json.body.record.name }}", "type": "string" },
-            { "id": "a3", "name": "email", "value": "={{ $json.body.record.email }}", "type": "string" },
-            { "id": "a4", "name": "company", "value": "={{ $json.body.record.company || ($json.body.record.email || '').split('@')[1] || '' }}", "type": "string" },
-            { "id": "a5", "name": "domain", "value": "={{ ($json.body.record.email || '').split('@')[1] || '' }}", "type": "string" },
-            { "id": "a6", "name": "size", "value": "={{ $json.body.record.size }}", "type": "number" },
-            { "id": "a7", "name": "budget", "value": "={{ $json.body.record.budget }}", "type": "number" },
-            { "id": "a8", "name": "timeline", "value": "={{ $json.body.record.timeline }}", "type": "number" },
-            { "id": "a9", "name": "message", "value": "={{ $json.body.record.message }}", "type": "string" }
-          ]
-        },
-        "options": {}
+        "jsCode": "// ── Set this to your deployed LeadFlow URL (no trailing slash) ──\nconst LEADFLOW_BASE_URL = 'https://leadflow-ten-beta.vercel.app';\nconst GEMINI_MODEL = 'gemini-3.7-flash';\n\n// The app posts a flat lead object; n8n wraps it under `body`.\nconst lead = $json.body ?? $json;\nconst email = String(lead.email || '');\nconst domain = email.split('@')[1] || '';\n\nconst clean = {\n  leadflow_base_url: LEADFLOW_BASE_URL,\n  lead_id: lead.id,\n  name: lead.name || '',\n  email,\n  company: lead.company || domain || '',\n  domain,\n  team_size: Number(lead.team_size ?? 0),\n  budget: Number(lead.budget ?? 0),\n  timeline: Number(lead.timeline ?? 0),\n  message: lead.message || '',\n  app_score: lead.score ?? null,\n};\n\nconst prompt = [\n  'You are a B2B sales qualification engine. Score inbound leads 0-100 on how likely they are to buy soon.',\n  '',\n  'Apply this rubric. Start at 30, then:',\n  '- Budget (monthly USD): >=50000 +28, >=10000 +22, >=2000 +14, >=500 +6, else +0.',\n  '- Team size: >=200 +16, >=50 +11, >=10 +6.',\n  '- Timeline (0 research .. 3 urgent): 3 +18, 2 +12, 1 +6.',\n  '- Business email +8; free email (gmail/yahoo/hotmail/outlook/icloud/proton) -6.',\n  '- Pain keywords in the message (manual, hours, waste, copy, paste, spreadsheet, urgent, asap, slow, error, hire, scale, integrate, automate): +4 each, capped at +12. Name the matched words in the reason.',\n  'Clamp the final score to 2-99. Temperature: hot >= 70, warm 45-69, cold < 45.',\n  '',\n  'Score this lead:',\n  'Name: ' + clean.name,\n  'Email: ' + clean.email,\n  'Company: ' + clean.company,\n  'Team size: ' + clean.team_size,\n  'Monthly budget (USD): ' + clean.budget,\n  'Timeline code (0 research .. 3 urgent): ' + clean.timeline,\n  'Message: ' + clean.message,\n].join('\\n');\n\nconst payload = {\n  model: GEMINI_MODEL,\n  input: prompt,\n  response_format: {\n    type: 'text',\n    mime_type: 'application/json',\n    schema: {\n      type: 'object',\n      properties: {\n        score: { type: 'integer', description: 'Final score, 2-99.' },\n        temperature: { type: 'string', enum: ['hot', 'warm', 'cold'] },\n        reason: { type: 'string', description: 'One sentence explaining the score.' },\n      },\n      required: ['score', 'temperature', 'reason'],\n    },\n  },\n};\n\nreturn [{ json: { ...clean, payload } }];"
       },
       "id": "node-normalize",
       "name": "Normalize Fields",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [200, 300]
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "notes": "Flattens the payload, derives company/domain from the email when blank, and builds the Gemini request body. Edit LEADFLOW_BASE_URL here."
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.openai.com/v1/chat/completions",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "openAiApi",
+        "url": "https://generativelanguage.googleapis.com/v1beta/interactions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Api-Revision", "value": "2026-05-20" }]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"You are a B2B sales qualification engine. Score inbound leads 0-100 for how likely they are to buy soon. Weigh budget, team size, timeline urgency, whether the email is a business domain, and pain signals in their message (manual work, wasted hours, spreadsheets, urgency). Reply ONLY as JSON: {\\\"score\\\": <int 0-100>, \\\"temperature\\\": \\\"hot|warm|cold\\\", \\\"reason\\\": \\\"<one sentence>\\\"}. hot >= 70, warm 45-69, cold < 45.\" },\n    { \"role\": \"user\", \"content\": \"Name: {{ $json.name }}\\nEmail: {{ $json.email }}\\nCompany: {{ $json.company }}\\nTeam size: {{ $json.size }}\\nMonthly budget (USD): {{ $json.budget }}\\nTimeline code (0 research .. 3 urgent): {{ $json.timeline }}\\nMessage: {{ $json.message }}\" }\n  ]\n}",
-        "options": {}
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": { "response": { "response": { "neverError": true } } }
       },
       "id": "node-ai",
-      "name": "AI Score (OpenAI REST)",
+      "name": "AI Score (Gemini)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [440, 300],
-      "notes": "Swap to the Anthropic/Claude endpoint or any LLM — it just needs to return the JSON schema below."
+      "notes": "Credential: Header Auth with name `x-goog-api-key` and your Gemini key from aistudio.google.com/apikey. neverError is on so a Gemini outage still lets the CRM sync run on the app's own score."
     },
     {
       "parameters": {
-        "jsCode": "// Parse the LLM JSON and merge it back with the lead fields.\nconst lead = $('Normalize Fields').item.json;\nlet ai = {};\ntry {\n  ai = JSON.parse($json.choices[0].message.content);\n} catch (e) {\n  ai = { score: 0, temperature: 'cold', reason: 'AI parse failed — defaulted to cold' };\n}\nconst score = Math.max(0, Math.min(100, Number(ai.score) || 0));\nconst temperature = ai.temperature || (score >= 70 ? 'hot' : score >= 45 ? 'warm' : 'cold');\nreturn [{ json: { ...lead, score, temperature, reason: ai.reason || '' } }];"
+        "jsCode": "// Pull the model's JSON out of whichever response envelope came back.\nconst lead = $('Normalize Fields').item.json;\nconst res = $json;\n\nlet text = '';\nif (typeof res.output_text === 'string') {\n  text = res.output_text;\n} else if (Array.isArray(res.steps)) {\n  text = res.steps\n    .flatMap((s) => s.content || [])\n    .filter((b) => typeof b.text === 'string')\n    .map((b) => b.text)\n    .join('');\n} else if (Array.isArray(res.candidates)) {\n  text = (res.candidates[0]?.content?.parts || [])\n    .filter((p) => typeof p.text === 'string')\n    .map((p) => p.text)\n    .join('');\n}\n\nlet ai = null;\ntry {\n  ai = JSON.parse(text);\n} catch (e) {\n  ai = null;\n}\n\nconst rawScore = Number(ai?.score);\nconst ai_ok = ai !== null && Number.isFinite(rawScore);\n\nconst score = ai_ok ? Math.max(2, Math.min(99, Math.round(rawScore))) : lead.app_score;\nconst temperature = ai_ok\n  ? (['hot', 'warm', 'cold'].includes(ai.temperature)\n      ? ai.temperature\n      : score >= 70 ? 'hot' : score >= 45 ? 'warm' : 'cold')\n  : (score >= 70 ? 'hot' : score >= 45 ? 'warm' : 'cold');\nconst reason = ai_ok ? String(ai.reason || '').trim() : 'Gemini unavailable — kept the app\\u2019s rubric score.';\n\n// Only overwrite the app's score when Gemini actually answered. A failed call\n// must never downgrade a good lead — it just marks it synced.\nconst patch = ai_ok\n  ? { score, temperature, ai_reason: reason, status: 'synced' }\n  : { status: 'synced' };\n\nconst ghl = {\n  locationId: 'YOUR_GHL_LOCATION_ID',\n  name: lead.name,\n  email: lead.email,\n  companyName: lead.company,\n  tags: ['leadflow', temperature, 'ai-score-' + score],\n  customFields: [\n    { key: 'ai_score', field_value: String(score) },\n    { key: 'ai_reason', field_value: reason },\n  ],\n};\n\nconst slack_text = [\n  ':fire: *HOT lead* — ' + lead.name + ' (' + lead.company + ')',\n  'Score: *' + score + '/100* — ' + reason,\n  'Email: ' + lead.email + ' | Budget: ' + lead.budget + ' | Timeline: ' + lead.timeline,\n].join('\\n');\n\nreturn [{ json: { ...lead, score, temperature, reason, ai_ok, patch, ghl, slack_text } }];"
       },
       "id": "node-parse",
       "name": "Parse AI Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [680, 300]
+      "position": [680, 300],
+      "notes": "Falls back to the score the app already computed if Gemini fails, so a bad API response never downgrades a hot lead."
     },
     {
       "parameters": {
@@ -75,13 +68,11 @@
         "nodeCredentialType": "highLevelOAuth2Api",
         "sendHeaders": true,
         "headerParameters": {
-          "parameters": [
-            { "name": "Version", "value": "2021-07-28" }
-          ]
+          "parameters": [{ "name": "Version", "value": "2021-07-28" }]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"locationId\": \"YOUR_GHL_LOCATION_ID\",\n  \"name\": \"{{ $json.name }}\",\n  \"email\": \"{{ $json.email }}\",\n  \"companyName\": \"{{ $json.company }}\",\n  \"tags\": [\"leadflow\", \"{{ $json.temperature }}\", \"ai-score-{{ $json.score }}\"],\n  \"customFields\": [\n    { \"key\": \"ai_score\", \"field_value\": \"{{ $json.score }}\" },\n    { \"key\": \"ai_reason\", \"field_value\": \"{{ $json.reason }}\" }\n  ]\n}",
+        "jsonBody": "={{ JSON.stringify($json.ghl) }}",
         "options": {}
       },
       "id": "node-ghl",
@@ -89,30 +80,23 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [920, 300],
-      "notes": "Upsert is idempotent on email — safe to re-run without creating duplicate contacts."
+      "notes": "Upsert is idempotent on email — safe to re-run without creating duplicate contacts. Replace YOUR_GHL_LOCATION_ID in the Parse AI Result node."
     },
     {
       "parameters": {
         "method": "PATCH",
-        "url": "=https://YOUR_PROJECT.supabase.co/rest/v1/leads?id=eq.{{ $json.lead_id }}",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "supabaseApi",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Prefer", "value": "return=minimal" }
-          ]
-        },
+        "url": "={{ $('Parse AI Result').item.json.leadflow_base_url }}/api/leads/{{ $('Parse AI Result').item.json.lead_id }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"score\": {{ $json.score }},\n  \"temperature\": \"{{ $json.temperature }}\",\n  \"ai_reason\": \"{{ $json.reason }}\",\n  \"status\": \"synced\"\n}",
+        "jsonBody": "={{ JSON.stringify($('Parse AI Result').item.json.patch) }}",
         "options": {}
       },
       "id": "node-writeback",
-      "name": "Write Score → Supabase",
+      "name": "Write Score → LeadFlow",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1160, 300]
+      "position": [1160, 300],
+      "notes": "Neon has no REST layer, so the write-back goes through the app's own PATCH /api/leads/:id route."
     },
     {
       "parameters": {
@@ -122,7 +106,12 @@
               "conditions": {
                 "options": { "caseSensitive": true, "typeValidation": "loose" },
                 "conditions": [
-                  { "id": "c1", "leftValue": "={{ $json.temperature }}", "rightValue": "hot", "operator": { "type": "string", "operation": "equals" } }
+                  {
+                    "id": "c1",
+                    "leftValue": "={{ $('Parse AI Result').item.json.temperature }}",
+                    "rightValue": "hot",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
                 ],
                 "combinator": "and"
               },
@@ -144,7 +133,7 @@
         "url": "https://hooks.slack.com/services/T000/B000/XXXXXXXX",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"text\": \":fire: *HOT lead* — {{ $json.name }} ({{ $json.company }})\\nScore: *{{ $json.score }}/100* — {{ $json.reason }}\\nEmail: {{ $json.email }} | Budget: {{ $json.budget }} | Timeline: {{ $json.timeline }}\"\n}",
+        "jsonBody": "={{ JSON.stringify({ text: $('Parse AI Result').item.json.slack_text }) }}",
         "options": {}
       },
       "id": "node-slack",
@@ -156,47 +145,44 @@
     },
     {
       "parameters": {
-        "content": "## LeadFlow automation\nSupabase INSERT ▶ webhook ▶ normalize ▶ **AI score** ▶ upsert to GoHighLevel ▶ write score back ▶ alert sales on hot leads.\n\nSet up 3 credentials before activating: **OpenAI**, **GoHighLevel (OAuth2)**, **Supabase**. Replace the Slack webhook URL, GHL locationId, and Supabase project URL.",
-        "height": 250,
-        "width": 420,
+        "content": "## LeadFlow automation (Neon + Gemini)\n\n`POST /api/leads` ▶ this webhook ▶ normalize ▶ **Gemini score** ▶ upsert to GoHighLevel ▶ write score back ▶ alert sales on hot leads.\n\n**Before activating:**\n1. Set `LEADFLOW_BASE_URL` in **Normalize Fields**.\n2. Add a **Header Auth** credential named `x-goog-api-key` holding your Gemini key → attach to **AI Score**.\n3. Add the **GoHighLevel OAuth2** credential and replace `YOUR_GHL_LOCATION_ID` in **Parse AI Result**.\n4. Replace the Slack Incoming Webhook URL.\n5. Copy this webhook's Production URL into `N8N_WEBHOOK_URL` on Vercel.\n\nAll HTTP bodies are built with `JSON.stringify`, so quotes or newlines in a lead's message can't break the request.",
+        "height": 400,
+        "width": 460,
         "color": 4
       },
       "id": "node-sticky",
       "name": "README",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-40, 40]
+      "position": [-40, -140]
     }
   ],
   "connections": {
-    "Supabase: New Lead (Webhook)": {
-      "main": [ [ { "node": "Normalize Fields", "type": "main", "index": 0 } ] ]
+    "LeadFlow: New Lead": {
+      "main": [[{ "node": "Normalize Fields", "type": "main", "index": 0 }]]
     },
     "Normalize Fields": {
-      "main": [ [ { "node": "AI Score (OpenAI REST)", "type": "main", "index": 0 } ] ]
+      "main": [[{ "node": "AI Score (Gemini)", "type": "main", "index": 0 }]]
     },
-    "AI Score (OpenAI REST)": {
-      "main": [ [ { "node": "Parse AI Result", "type": "main", "index": 0 } ] ]
+    "AI Score (Gemini)": {
+      "main": [[{ "node": "Parse AI Result", "type": "main", "index": 0 }]]
     },
     "Parse AI Result": {
-      "main": [ [ { "node": "Upsert to GoHighLevel", "type": "main", "index": 0 } ] ]
+      "main": [[{ "node": "Upsert to GoHighLevel", "type": "main", "index": 0 }]]
     },
     "Upsert to GoHighLevel": {
-      "main": [ [ { "node": "Write Score → Supabase", "type": "main", "index": 0 } ] ]
+      "main": [[{ "node": "Write Score → LeadFlow", "type": "main", "index": 0 }]]
     },
-    "Write Score → Supabase": {
-      "main": [ [ { "node": "Route by Temperature", "type": "main", "index": 0 } ] ]
+    "Write Score → LeadFlow": {
+      "main": [[{ "node": "Route by Temperature", "type": "main", "index": 0 }]]
     },
     "Route by Temperature": {
-      "main": [
-        [ { "node": "Alert Sales (Slack)", "type": "main", "index": 0 } ],
-        []
-      ]
+      "main": [[{ "node": "Alert Sales (Slack)", "type": "main", "index": 0 }], []]
     }
   },
   "active": false,
   "settings": { "executionOrder": "v1" },
   "pinData": {},
-  "meta": { "templatecredsSetupCompleted": false },
-  "tags": [ { "name": "leadflow" } ]
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": [{ "name": "leadflow" }]
 }

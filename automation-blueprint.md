@@ -61,14 +61,14 @@ Import `n8n-workflow.json` (n8n → *Workflows* → *Import from File*). Nodes:
 |---|------|------|--------------|
 | 1 | **Supabase: New Lead** | Webhook | Receives the INSERT payload from Supabase. |
 | 2 | **Normalize Fields** | Set | Flattens `body.record.*` into clean fields; derives `company`/`domain` from the email if blank. |
-| 3 | **AI Score** | HTTP Request → OpenAI | Sends the lead to an LLM with a scoring rubric; forces JSON output `{score, temperature, reason}`. |
+| 3 | **AI Score** | HTTP Request → Gemini | Sends the lead to an LLM with a scoring rubric; forces JSON output `{score, temperature, reason}`. |
 | 4 | **Parse AI Result** | Code | Parses the JSON, clamps the score 0–100, and re-attaches the lead fields. |
 | 5 | **Upsert to GoHighLevel** | HTTP Request | Creates/updates the contact (idempotent on email), tags it `hot/warm/cold` + `ai-score-NN`. |
 | 6 | **Write Score → Supabase** | HTTP Request (PATCH) | Saves score/temperature/reason back so the dashboard shows it. |
 | 7 | **Route by Temperature** | Switch | Branches `hot` vs everything else. |
 | 8 | **Alert Sales (Slack)** | HTTP Request | Fires only for hot leads, with the AI's one-line reason. |
 
-**Credentials to add before activating:** OpenAI, GoHighLevel (OAuth2), Supabase.
+**Credentials to add before activating:** Gemini (Header Auth `x-goog-api-key`), GoHighLevel (OAuth2).
 **Placeholders to replace:** Slack Incoming Webhook URL, GHL `locationId`, and `YOUR_PROJECT.supabase.co`.
 
 ### The AI scoring prompt (the heart of it)
@@ -79,7 +79,7 @@ The LLM is instructed to weigh budget, team size, timeline urgency, business-vs-
 { "score": 82, "temperature": "hot", "reason": "Enterprise budget with an urgent timeline and clear manual-work pain." }
 ```
 
-Because the output schema is fixed, you can swap OpenAI for Claude or any model without changing the rest of the flow. The interactive demo (`leadflow-mvp.html`) implements the *same* rubric in plain JavaScript so you can see the scoring logic live without any API keys.
+Because the output schema is fixed, you can swap Gemini for Claude or any model without changing the rest of the flow. The interactive demo (`leadflow-mvp.html`) implements the *same* rubric in plain JavaScript so you can see the scoring logic live without any API keys.
 
 ---
 
@@ -89,14 +89,14 @@ If the team prefers Make.com, build this scenario:
 
 1. **Webhooks → Custom webhook** — paste its URL into the Supabase Database Webhook.
 2. **Supabase → Watch Rows** *(alternative trigger if you skip the DB webhook).*
-3. **OpenAI (ChatGPT) → Create a Chat Completion** — same system prompt, Response format = JSON.
+3. **HTTP → Gemini** — same rubric prompt, `response_format.mime_type` = `application/json`. (Make has no native Gemini scoring module; use an HTTP request module.)
 4. **Tools → Set variable** / **JSON → Parse JSON** — extract `score`, `temperature`, `reason`.
 5. **GoHighLevel → Upsert Contact** (native module) — map fields + tags.
 6. **Supabase → Update a Row** — write score/status back.
 7. **Router** — one route filtered to `temperature = hot`.
 8. **Slack → Create a Message** on the hot route.
 
-**Zapier** version is the same shape: *Webhooks by Zapier (Catch Hook)* → *OpenAI* → *Formatter (Utilities → Import JSON)* → *GoHighLevel (Create/Update Contact)* → *Filter (only continue if hot)* → *Slack*.
+**Zapier** version is the same shape: *Webhooks by Zapier (Catch Hook)* → *Webhooks: POST to Gemini* → *Formatter (Utilities → Import JSON)* → *GoHighLevel (Create/Update Contact)* → *Filter (only continue if hot)* → *Slack*.
 
 ---
 
