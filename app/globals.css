@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-page text-ink antialiased;
+  }
+
+  /* Light theme only — never inherit the OS dark preference. */
+  ::selection {
+    @apply bg-accent-soft text-accent;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line bg-card shadow-card;
+  }
+
+  .field-label {
+    @apply mb-1.5 block text-[13px] font-medium text-ink;
+  }
+
+  .field {
+    @apply w-full rounded-xl border border-line bg-white px-3.5 py-2.5 text-[14px] text-ink
+           placeholder:text-muted/70 outline-none transition
+           focus:border-accent focus:ring-4 focus:ring-accent/10;
+  }
+
+  select.field {
+    @apply cursor-pointer appearance-none bg-[length:16px] bg-[right_0.85rem_center] bg-no-repeat pr-10;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  }
+
+  .btn-primary {
+    @apply inline-flex w-full items-center justify-center gap-2 rounded-xl
+           bg-gradient-to-r from-accent to-accent-end px-4 py-3 text-[14px] font-semibold text-white
+           shadow-[0_6px_16px_-6px_rgba(79,70,229,0.7)] transition
+           hover:brightness-[1.06] active:translate-y-px
+           disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:brightness-100;
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-semibold;
+  }
+}
+
+/* Thin, unobtrusive scrollbars inside the lead table. */
+.scroll-slim::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  background: #dfe3ee;
+  border-radius: 999px;
+}
+.scroll-slim::-webkit-scrollbar-track {
+  background: transparent;
+}

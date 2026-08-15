@@ -1,0 +1,202 @@
+{
+  "name": "LeadFlow — Intake → AI Score → CRM Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "leadflow-new-lead",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "node-webhook",
+      "name": "Supabase: New Lead (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [-40, 300],
+      "webhookId": "leadflow-new-lead",
+      "notes": "Point a Supabase Database Webhook (INSERT on public.leads) at this URL."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "lead_id", "value": "={{ $json.body.record.id }}", "type": "string" },
+            { "id": "a2", "name": "name", "value": "={{ $json.body.record.name }}", "type": "string" },
+            { "id": "a3", "name": "email", "value": "={{ $json.body.record.email }}", "type": "string" },
+            { "id": "a4", "name": "company", "value": "={{ $json.body.record.company || ($json.body.record.email || '').split('@')[1] || '' }}", "type": "string" },
+            { "id": "a5", "name": "domain", "value": "={{ ($json.body.record.email || '').split('@')[1] || '' }}", "type": "string" },
+            { "id": "a6", "name": "size", "value": "={{ $json.body.record.size }}", "type": "number" },
+            { "id": "a7", "name": "budget", "value": "={{ $json.body.record.budget }}", "type": "number" },
+            { "id": "a8", "name": "timeline", "value": "={{ $json.body.record.timeline }}", "type": "number" },
+            { "id": "a9", "name": "message", "value": "={{ $json.body.record.message }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-normalize",
+      "name": "Normalize Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"You are a B2B sales qualification engine. Score inbound leads 0-100 for how likely they are to buy soon. Weigh budget, team size, timeline urgency, whether the email is a business domain, and pain signals in their message (manual work, wasted hours, spreadsheets, urgency). Reply ONLY as JSON: {\\\"score\\\": <int 0-100>, \\\"temperature\\\": \\\"hot|warm|cold\\\", \\\"reason\\\": \\\"<one sentence>\\\"}. hot >= 70, warm 45-69, cold < 45.\" },\n    { \"role\": \"user\", \"content\": \"Name: {{ $json.name }}\\nEmail: {{ $json.email }}\\nCompany: {{ $json.company }}\\nTeam size: {{ $json.size }}\\nMonthly budget (USD): {{ $json.budget }}\\nTimeline code (0 research .. 3 urgent): {{ $json.timeline }}\\nMessage: {{ $json.message }}\" }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-ai",
+      "name": "AI Score (OpenAI REST)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300],
+      "notes": "Swap to the Anthropic/Claude endpoint or any LLM — it just needs to return the JSON schema below."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the LLM JSON and merge it back with the lead fields.\nconst lead = $('Normalize Fields').item.json;\nlet ai = {};\ntry {\n  ai = JSON.parse($json.choices[0].message.content);\n} catch (e) {\n  ai = { score: 0, temperature: 'cold', reason: 'AI parse failed — defaulted to cold' };\n}\nconst score = Math.max(0, Math.min(100, Number(ai.score) || 0));\nconst temperature = ai.temperature || (score >= 70 ? 'hot' : score >= 45 ? 'warm' : 'cold');\nreturn [{ json: { ...lead, score, temperature, reason: ai.reason || '' } }];"
+      },
+      "id": "node-parse",
+      "name": "Parse AI Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://services.leadconnectorhq.com/contacts/upsert",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "highLevelOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Version", "value": "2021-07-28" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"locationId\": \"YOUR_GHL_LOCATION_ID\",\n  \"name\": \"{{ $json.name }}\",\n  \"email\": \"{{ $json.email }}\",\n  \"companyName\": \"{{ $json.company }}\",\n  \"tags\": [\"leadflow\", \"{{ $json.temperature }}\", \"ai-score-{{ $json.score }}\"],\n  \"customFields\": [\n    { \"key\": \"ai_score\", \"field_value\": \"{{ $json.score }}\" },\n    { \"key\": \"ai_reason\", \"field_value\": \"{{ $json.reason }}\" }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-ghl",
+      "name": "Upsert to GoHighLevel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 300],
+      "notes": "Upsert is idempotent on email — safe to re-run without creating duplicate contacts."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://YOUR_PROJECT.supabase.co/rest/v1/leads?id=eq.{{ $json.lead_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"score\": {{ $json.score }},\n  \"temperature\": \"{{ $json.temperature }}\",\n  \"ai_reason\": \"{{ $json.reason }}\",\n  \"status\": \"synced\"\n}",
+        "options": {}
+      },
+      "id": "node-writeback",
+      "name": "Write Score → Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "loose" },
+                "conditions": [
+                  { "id": "c1", "leftValue": "={{ $json.temperature }}", "rightValue": "hot", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "hot"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra", "renameFallbackOutput": "not hot" }
+      },
+      "id": "node-switch",
+      "name": "Route by Temperature",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1400, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hooks.slack.com/services/T000/B000/XXXXXXXX",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \":fire: *HOT lead* — {{ $json.name }} ({{ $json.company }})\\nScore: *{{ $json.score }}/100* — {{ $json.reason }}\\nEmail: {{ $json.email }} | Budget: {{ $json.budget }} | Timeline: {{ $json.timeline }}\"\n}",
+        "options": {}
+      },
+      "id": "node-slack",
+      "name": "Alert Sales (Slack)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1660, 200],
+      "notes": "Replace with your Slack Incoming Webhook URL. Only fires for hot leads."
+    },
+    {
+      "parameters": {
+        "content": "## LeadFlow automation\nSupabase INSERT ▶ webhook ▶ normalize ▶ **AI score** ▶ upsert to GoHighLevel ▶ write score back ▶ alert sales on hot leads.\n\nSet up 3 credentials before activating: **OpenAI**, **GoHighLevel (OAuth2)**, **Supabase**. Replace the Slack webhook URL, GHL locationId, and Supabase project URL.",
+        "height": 250,
+        "width": 420,
+        "color": 4
+      },
+      "id": "node-sticky",
+      "name": "README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-40, 40]
+    }
+  ],
+  "connections": {
+    "Supabase: New Lead (Webhook)": {
+      "main": [ [ { "node": "Normalize Fields", "type": "main", "index": 0 } ] ]
+    },
+    "Normalize Fields": {
+      "main": [ [ { "node": "AI Score (OpenAI REST)", "type": "main", "index": 0 } ] ]
+    },
+    "AI Score (OpenAI REST)": {
+      "main": [ [ { "node": "Parse AI Result", "type": "main", "index": 0 } ] ]
+    },
+    "Parse AI Result": {
+      "main": [ [ { "node": "Upsert to GoHighLevel", "type": "main", "index": 0 } ] ]
+    },
+    "Upsert to GoHighLevel": {
+      "main": [ [ { "node": "Write Score → Supabase", "type": "main", "index": 0 } ] ]
+    },
+    "Write Score → Supabase": {
+      "main": [ [ { "node": "Route by Temperature", "type": "main", "index": 0 } ] ]
+    },
+    "Route by Temperature": {
+      "main": [
+        [ { "node": "Alert Sales (Slack)", "type": "main", "index": 0 } ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "templatecredsSetupCompleted": false },
+  "tags": [ { "name": "leadflow" } ]
+}
