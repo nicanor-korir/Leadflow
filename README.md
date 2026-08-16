@@ -125,10 +125,23 @@ Covers the rubric's boundaries and every Gemini failure mode — bad key, HTTP e
 |---|---|
 | `GET /api/leads` | All leads, highest score first. Auto-creates + auto-seeds. |
 | `POST /api/leads` | Validate → score → insert → fire optional webhook → return the lead. |
-| `PATCH /api/leads/:id` | Write-back for the automation layer (score, temperature, reason, status). |
+| `PATCH /api/leads/:id` | Write-back for the automation layer (score, temperature, reason, status, outcome). |
+| `POST /api/leads/:id/rescore` | Re-runs qualification against the stored lead. |
+| `GET /api/leads/export` | CSV download. Accepts `q` and `temperature` to match the dashboard filters. |
 | `GET /api/health` | `{ ok: true, db: "connected" }`. |
 
-## 6. Architecture
+## 6. Working with a lead
+
+**Export.** The toolbar's export button downloads exactly the rows you're looking at — the search box and temperature filter are passed through as `q` and `temperature`, and the button shows the count. The file is RFC-4180 escaped (a prospect's message routinely contains commas, quotes and newlines) and carries a UTF-8 BOM so Excel reads names correctly. Both raw values and human labels are included, so `budget_usd_monthly` stays sortable while `budget_label` stays readable.
+
+**Open a lead** by clicking its row to get everything the table has no room for: the full message, team size, budget and timeline as labels, when it was captured, and whether the score came from Gemini or the rubric. Two actions:
+
+- **Re-score with AI.** Scoring silently falls back to the rubric whenever Gemini is unavailable, so a lead captured during an outage keeps a rubric score forever with nothing to flag it. Re-scoring is the repair, and the `score_source` badge tells you whether it worked this time.
+- **Record the outcome** — *Won*, *Lost*, or *No response*. This is the piece that makes the scores falsifiable: until you know what actually happened, nobody can say whether a 90 converts better than a 50. Export the CSV once you have a few dozen and the answer is a pivot table.
+
+Both columns (`score_source`, `outcome`) are added by `ALTER TABLE … ADD COLUMN IF NOT EXISTS` on startup, so there is still no migration step.
+
+## 7. Architecture
 
 ```
 ┌──────────────┐   POST /api/leads   ┌────────────────────┐   INSERT   ┌──────────────┐
@@ -180,7 +193,7 @@ sequenceDiagram
   API-->>UI: leads → dashboard
 ```
 
-## 7. Project structure
+## 8. Project structure
 
 ```
 ├─ app/
@@ -188,18 +201,23 @@ sequenceDiagram
 │  ├─ page.tsx                # server component: loads leads, renders the dashboard
 │  ├─ globals.css             # Tailwind + light-theme component classes
 │  └─ api/
-│     ├─ leads/route.ts       # GET + POST
-│     ├─ leads/[id]/route.ts  # PATCH — automation write-back
+│     ├─ leads/route.ts               # GET + POST
+│     ├─ leads/[id]/route.ts          # PATCH — automation write-back + outcome
+│     ├─ leads/[id]/rescore/route.ts  # POST — re-run qualification
+│     ├─ leads/export/route.ts        # GET  — filtered CSV
 │     └─ health/route.ts
 ├─ components/
-│  ├─ Dashboard.tsx           # client shell: state, refresh, toast
+│  ├─ Dashboard.tsx           # client shell: state, refresh, toast, drawer
 │  ├─ LeadForm.tsx            # intake form + submit animation
+│  ├─ LeadDrawer.tsx          # lead detail panel: re-score + record outcome
 │  ├─ Pipeline.tsx            # 4-step animated pipeline strip
 │  ├─ StatTiles.tsx           # total / hot / avg score / synced
-│  └─ LeadTable.tsx           # search, temperature filter, ranked table
+│  └─ LeadTable.tsx           # search, filter, export, ranked table
 ├─ lib/
 │  ├─ db.ts                   # neon() client, ensureSchema(), seedIfEmpty()
-│  ├─ score.ts                # scoring rubric + optional LLM path
+│  ├─ score.ts                # scoring rubric + optional Gemini path
+│  ├─ csv.ts                  # RFC-4180 CSV serialisation
+│  ├─ filter.ts               # search/temperature filter shared by table + export
 │  └─ types.ts                # Lead type + form option lists
 ├─ n8n-workflow.json          # importable automation workflow
 ├─ automation-blueprint.md    # Make.com / Zapier equivalents, reliability notes

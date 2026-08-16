@@ -1,4 +1,15 @@
-import type { Temperature } from "./score";
+import type { ScoreSource, Temperature } from "./score";
+
+/** Sales outcome, written back once a deal resolves. This is what makes the
+ *  scores falsifiable — without it, nobody can tell whether a 90 beats a 50. */
+export const OUTCOMES = ["won", "lost", "no_response"] as const;
+export type Outcome = (typeof OUTCOMES)[number];
+
+export const OUTCOME_LABELS: Record<Outcome, string> = {
+  won: "Won",
+  lost: "Lost",
+  no_response: "No response",
+};
 
 export interface Lead {
   id: number;
@@ -14,6 +25,8 @@ export interface Lead {
   temperature: Temperature | null;
   ai_reason: string | null;
   status: string | null;
+  score_source: ScoreSource | null;
+  outcome: Outcome | null;
 }
 
 export const TEAM_SIZES = [
@@ -43,4 +56,25 @@ export const TIMELINES = [
 
 export function timelineLabel(value: number | null | undefined): string {
   return TIMELINES.find((t) => t.value === value)?.label ?? "—";
+}
+
+export function teamSizeLabel(value: number | null | undefined): string {
+  return TEAM_SIZES.find((t) => t.value === value)?.label ?? (value ? `${value} people` : "—");
+}
+
+export function budgetLabel(value: number | null | undefined): string {
+  return BUDGETS.find((b) => b.value === value)?.label ?? (value ? `$${value.toLocaleString()}` : "—");
+}
+
+/** "3h ago" / "2d ago" — the dashboard stores created_at but never showed it. */
+export function relativeTime(iso: string): string {
+  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
 }

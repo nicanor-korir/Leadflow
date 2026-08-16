@@ -11,6 +11,10 @@
 
 export type Temperature = "hot" | "warm" | "cold";
 
+/** Which code path actually produced a score. Persisted so a silent Gemini
+ *  outage is visible in the data instead of being invisible forever. */
+export type ScoreSource = "rubric" | "gemini";
+
 export interface ScoreInput {
   name: string;
   email: string;
@@ -25,6 +29,7 @@ export interface ScoreResult {
   score: number;
   temperature: Temperature;
   reason: string;
+  source: ScoreSource;
 }
 
 const FREE_EMAIL_DOMAINS = [
@@ -150,7 +155,7 @@ export function scoreLead(input: ScoreInput): ScoreResult {
         ? "Worth nurturing"
         : "Low intent for now";
 
-  return { score, temperature, reason: `${verdict}: ${signals.join(", ")}.` };
+  return { score, temperature, reason: `${verdict}: ${signals.join(", ")}.`, source: "rubric" };
 }
 
 const RUBRIC_PROMPT = `You are a B2B sales qualification engine. Score inbound leads 0-100 on how likely they are to buy soon.
@@ -276,6 +281,7 @@ export async function scoreLeadSmart(input: ScoreInput): Promise<ScoreResult> {
       score,
       temperature,
       reason: String(parsed.reason || "").trim() || scoreLead(input).reason,
+      source: "gemini",
     };
   } catch (error) {
     console.warn("[score] Gemini path failed, using the deterministic rubric:", error);

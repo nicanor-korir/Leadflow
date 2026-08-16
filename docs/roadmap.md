@@ -20,16 +20,16 @@ Every finding below was verified against the code, not assumed. Where something 
 | 2 | `POST /api/leads` is an open write with no rate limit, captcha, or honeypot — each abusive request can cost a Gemini call | `app/api/leads/route.ts` | **Critical** |
 | 3 | Public dashboard renders every lead's full email address | `components/LeadTable.tsx:96` | **High** (privacy) |
 | 4 | Webhook delivery is best-effort only; an n8n outage loses the sync permanently, with no dead-letter | `notifyAutomation()` logs and moves on | **High** |
-| 5 | Silent AI failure — an expired key falls back to the rubric forever while the badge still reads "LLM scoring" | badge checks only that the env var is set (`app/page.tsx:21`) | **High** |
+| 5 | Silent AI failure — an expired key falls back to the rubric forever while the badge still reads "LLM scoring" | badge checks only that the env var is set (`app/page.tsx:21`) | **High** — *partly addressed: `score_source` is now recorded per lead and shown in the lead drawer; the header badge is still env-var based* |
 | 6 | No duplicate protection — the same person submitting twice creates two leads | no `UNIQUE` in `lib/db.ts`; **two identical live rows (ids 8, 9) already exist in production** | Medium |
-| 7 | Scores are unfalsifiable — no outcome data, so nobody knows if hot leads convert better | no `outcome` column | Medium |
+| 7 | Scores are unfalsifiable — no outcome data, so nobody knows if hot leads convert better | no `outcome` column | Medium — *addressed: `outcome` column plus won/lost/no-response capture in the lead drawer, exportable to CSV. The analysis query in 3.2 now runs.* |
 | 8 | Dev and production share one Neon database | single `DATABASE_URL` across all three Vercel environments | Medium |
 | 9 | `listLeads()` is an unbounded `SELECT` with no `LIMIT` | `lib/db.ts` | Medium |
 | 10 | Dashboard only refreshes after *your own* submit — a second viewer never sees new leads | single `void refresh()` in `components/Dashboard.tsx:50` | Medium |
 | 11 | No CI — nothing runs `npm test` or `npm run build` on push | no `.github/workflows` | Medium |
 | 12 | The **Enriched** pipeline step is decorative; nothing enriches anything | `components/Pipeline.tsx` | Low |
 | 13 | Changing a rubric weight silently invalidates comparisons with historic scores | no `score_version` column | Low |
-| 14 | `created_at` is stored but never displayed — no "when" column, no recency sort | not referenced in `components/` | Low |
+| 14 | `created_at` is stored but never displayed — no "when" column, no recency sort | not referenced in `components/` | Low — *addressed: relative time on every row and an absolute timestamp in the drawer; recency sort still missing* |
 | 15 | Slack alerts aren't idempotent; a retried delivery posts twice | n8n workflow | Low |
 | 16 | Toast claims "synced" while the row correctly shows `captured` | spec-mandated string | Cosmetic |
 

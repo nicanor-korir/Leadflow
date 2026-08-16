@@ -50,17 +50,18 @@ export async function POST(request: Request) {
     await ensureReady();
 
     // Rubric by default; the Gemini path only when GEMINI_API_KEY is set.
-    const { score, temperature, reason } = await scoreLeadSmart(input);
+    const { score, temperature, reason, source } = await scoreLeadSmart(input);
 
     const sql = db();
     const rows = await sql`
       INSERT INTO leads (name, email, company, team_size, budget, timeline, message,
-                         score, temperature, ai_reason, status)
+                         score, temperature, ai_reason, status, score_source)
       VALUES (${input.name}, ${input.email}, ${input.company ?? null},
               ${input.team_size ?? null}, ${input.budget ?? null}, ${input.timeline ?? null},
-              ${input.message ?? null}, ${score}, ${temperature}, ${reason}, 'captured')
+              ${input.message ?? null}, ${score}, ${temperature}, ${reason}, 'captured', ${source})
       RETURNING id, created_at, name, email, company, team_size, budget,
-                timeline, message, score, temperature, ai_reason, status
+                timeline, message, score, temperature, ai_reason, status,
+                score_source, outcome
     `;
     const lead = (rows as unknown as Lead[])[0];
 

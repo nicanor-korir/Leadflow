@@ -68,6 +68,12 @@ export async function ensureSchema(): Promise<void> {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS leads_score_idx ON leads (score DESC, created_at DESC)`;
+
+  // Added after the initial release. ADD COLUMN IF NOT EXISTS keeps this a
+  // no-op on databases that already have them, so there is still no migration
+  // step to run — the zero-config promise holds.
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS score_source TEXT`;
+  await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS outcome TEXT`;
 }
 
 /** Sample leads, scored through the real rubric so the demo numbers hold up. */
@@ -136,8 +142,9 @@ export async function seedIfEmpty(): Promise<void> {
   const now = Date.now();
 
   const rows = SAMPLE_LEADS.map((lead) => {
-    const { score, temperature, reason } = scoreLead(lead);
+    const { score, temperature, reason, source } = scoreLead(lead);
     return {
+      score_source: source,
       created_at: new Date(now - lead.hoursAgo * 3_600_000).toISOString(),
       name: lead.name,
       email: lead.email,
@@ -158,11 +165,11 @@ export async function seedIfEmpty(): Promise<void> {
   await sql`
     INSERT INTO leads (
       created_at, name, email, company, team_size, budget,
-      timeline, message, score, temperature, ai_reason, status
+      timeline, message, score, temperature, ai_reason, status, score_source
     )
     SELECT
       s.created_at, s.name, s.email, s.company, s.team_size, s.budget,
-      s.timeline, s.message, s.score, s.temperature, s.ai_reason, s.status
+      s.timeline, s.message, s.score, s.temperature, s.ai_reason, s.status, s.score_source
     FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS s(
       created_at  TIMESTAMPTZ,
       name        TEXT,
@@ -175,7 +182,8 @@ export async function seedIfEmpty(): Promise<void> {
       score       INTEGER,
       temperature TEXT,
       ai_reason   TEXT,
-      status      TEXT
+      status      TEXT,
+      score_source TEXT
     )
     WHERE NOT EXISTS (SELECT 1 FROM leads)
   `;
@@ -186,7 +194,8 @@ export async function listLeads(): Promise<Lead[]> {
   const sql = db();
   const rows = await sql`
     SELECT id, created_at, name, email, company, team_size, budget,
-           timeline, message, score, temperature, ai_reason, status
+           timeline, message, score, temperature, ai_reason, status,
+           score_source, outcome
     FROM leads
     ORDER BY score DESC NULLS LAST, created_at DESC
   `;

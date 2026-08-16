@@ -16,6 +16,8 @@ const PatchSchema = z.object({
   temperature: z.enum(["hot", "warm", "cold"]).optional(),
   ai_reason: z.string().trim().max(2000).optional(),
   status: z.enum(["captured", "synced"]).optional(),
+  // Nullable so the UI can clear a recorded outcome, not just set one.
+  outcome: z.enum(["won", "lost", "no_response"]).nullable().optional(),
 });
 
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
@@ -39,7 +41,11 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     );
   }
 
-  const { score, temperature, ai_reason, status } = parsed.data;
+  const { score, temperature, ai_reason, status, outcome } = parsed.data;
+
+  // `outcome: null` means "clear it", which COALESCE cannot express — so the
+  // presence of the key, not its value, decides whether the column is written.
+  const setsOutcome = Object.prototype.hasOwnProperty.call(parsed.data, "outcome");
 
   try {
     await ensureReady();
@@ -52,10 +58,12 @@ export async function PATCH(request: Request, { params }: { params: { id: string
         score       = COALESCE(${score ?? null}::int, score),
         temperature = COALESCE(${temperature ?? null}::text, temperature),
         ai_reason   = COALESCE(${ai_reason ?? null}::text, ai_reason),
-        status      = COALESCE(${status ?? null}::text, status)
+        status      = COALESCE(${status ?? null}::text, status),
+        outcome     = CASE WHEN ${setsOutcome}::boolean THEN ${outcome ?? null}::text ELSE outcome END
       WHERE id = ${id}
       RETURNING id, created_at, name, email, company, team_size, budget,
-                timeline, message, score, temperature, ai_reason, status
+                timeline, message, score, temperature, ai_reason, status,
+                score_source, outcome
     `;
 
     const lead = (rows as unknown as Lead[])[0];

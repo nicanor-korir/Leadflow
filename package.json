@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "tsx tests/score.test.mts"
+    "test": "tsx tests/csv.test.mts && tsx tests/score.test.mts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.1",

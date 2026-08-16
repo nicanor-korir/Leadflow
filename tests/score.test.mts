@@ -41,13 +41,14 @@ function check(label: string, actual: unknown, expected: unknown) {
 // A — no key at all
 delete process.env.GEMINI_API_KEY;
 check("no key -> deterministic rubric", (await scoreLeadSmart(LEAD)).score, RUBRIC.score);
+check("no key -> source is rubric", (await scoreLeadSmart(LEAD)).source, "rubric");
 check("no key -> no HTTP call made", captured, null);
 
 process.env.GEMINI_API_KEY = "test-key";
 
 // B — SDK-style convenience field
 stub(() => ok({ output_text: MODEL_JSON }));
-check("output_text envelope", await scoreLeadSmart(LEAD), { score: 81, temperature: "hot", reason: "Enterprise urgency." });
+check("output_text envelope", await scoreLeadSmart(LEAD), { score: 81, temperature: "hot", reason: "Enterprise urgency.", source: "gemini" });
 
 // request shape, checked once
 check("endpoint", captured!.url, "https://generativelanguage.googleapis.com/v1beta/interactions");
@@ -89,6 +90,7 @@ check("non-numeric score -> rubric", (await scoreLeadSmart(LEAD)).score, RUBRIC.
 
 stub(() => ({ ok: false, status: 403, json: async () => ({}), text: async () => "PERMISSION_DENIED" }));
 check("HTTP 403 -> rubric", (await scoreLeadSmart(LEAD)).score, RUBRIC.score);
+check("HTTP 403 -> source is rubric", (await scoreLeadSmart(LEAD)).source, "rubric");
 
 stub(() => { throw new Error("ECONNRESET"); });
 check("network throw -> rubric", (await scoreLeadSmart(LEAD)).score, RUBRIC.score);

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
+import LeadDrawer from "./LeadDrawer";
 import LeadForm from "./LeadForm";
 import LeadTable from "./LeadTable";
 import StatTiles from "./StatTiles";
@@ -16,13 +17,27 @@ export default function Dashboard({
 }) {
   const [leads, setLeads] = useState<Lead[]>(initialLeads);
   const [highlightId, setHighlightId] = useState<number | undefined>();
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Track the id rather than the object so the drawer re-renders from the
+  // list whenever a lead is updated elsewhere.
+  const selected = leads.find((lead) => lead.id === selectedId) ?? null;
 
   useEffect(() => {
     return () => {
       if (toastTimer.current) clearTimeout(toastTimer.current);
     };
+  }, []);
+
+  // Both handlers must keep a stable identity: the drawer resets its transient
+  // status message whenever they change, so inline closures would wipe the
+  // "Re-scored with Gemini" note the moment the lead list updated.
+  const closeDrawer = useCallback(() => setSelectedId(null), []);
+
+  const applyUpdate = useCallback((updated: Lead) => {
+    setLeads((previous) => previous.map((lead) => (lead.id === updated.id ? updated : lead)));
   }, []);
 
   const refresh = useCallback(async () => {
@@ -80,10 +95,16 @@ export default function Dashboard({
 
           <StatTiles leads={leads} />
           <div className="mt-5">
-            <LeadTable leads={leads} highlightId={highlightId} />
+            <LeadTable
+              leads={leads}
+              highlightId={highlightId}
+              onSelect={(lead) => setSelectedId(lead.id)}
+            />
           </div>
         </section>
       </div>
+
+      <LeadDrawer lead={selected} onClose={closeDrawer} onUpdated={applyUpdate} />
 
       {toast && (
         <div
